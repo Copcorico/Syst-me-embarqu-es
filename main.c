@@ -8,8 +8,9 @@
 BME280I2C bme;
 RTC_DS3231 rtc;
 ChainableLED leds(4, 5, 1);
-SoftwareSerial gpsSerial(2, 3);
+SoftwareSerial SoftSerial(4, 3);
 #define SERIAL_BAUD 9600
+#define light_sensor A0
 
 // Adresses EEPROM
 // Adresses EEPROM réorganisées
@@ -45,7 +46,7 @@ void setup() {
   delay(100);
   Wire.begin();
   rtc.begin();
-    
+  SoftSerial.begin(9600);
 
   pinMode(red_button, INPUT);
   pinMode(green_button, INPUT);
@@ -122,6 +123,106 @@ void modeConfiguration() {
     String input = Serial.readStringUntil('\n');
     processConfigurationCommand(input);
   }
+}
+
+
+float get_luminosity() {
+  float sensorValue = analogRead(light_sensor); // Lire la valeur brute du capteur
+  Rsensor=(float)(1023-sensorValue)*10/sensorValue;
+  return sensorValue; // Retourner la valeur brute pour un traitement ultérieur
+
+}
+
+float get_pressure(Stream* client){
+   float temp(NAN), hum(NAN), pres(NAN);
+
+   BME280::TempUnit tempUnit(BME280::TempUnit_Celsius);
+   BME280::PresUnit presUnit(BME280::PresUnit_Pa);
+
+   bme.read(pres, temp, hum, tempUnit, presUnit);
+
+   //client->print("\t\tPressure: ");
+   //client->print(pres);
+   //client->println(" Pa");
+  return(pres);
+   delay(1000);
+}
+
+float get_humidity
+(
+  Stream* client
+)
+  {
+   float temp(NAN), hum(NAN), pres(NAN);
+
+   BME280::TempUnit tempUnit(BME280::TempUnit_Celsius);
+   BME280::PresUnit presUnit(BME280::PresUnit_Pa);
+
+   bme.read(pres, temp, hum, tempUnit, presUnit);
+
+  //client->print("\t\tHumidity: ");
+  //client->print(hum);
+  //client->print("% RH");
+  //client->print("\n");
+  return(hum);
+delay(1000);
+
+float get_temp(Stream* client){
+   float temp(NAN), hum(NAN), pres(NAN);
+
+   BME280::TempUnit tempUnit(BME280::TempUnit_Celsius);
+   BME280::PresUnit presUnit(BME280::PresUnit_Pa);
+
+   bme.read(pres, temp, hum, tempUnit, presUnit);
+
+   //client->print("\t\tPressure: ");
+   //client->print(pres);
+   //client->println(" Pa");
+  return(temp);
+   delay(1000);
+}
+
+
+String get_localisation() {
+  // Vérifie si des données GPS sont disponibles
+  if (!SoftSerial.available()) return "";
+
+  // Lecture d'une ligne NMEA complète
+  String gpsData = SoftSerial.readStringUntil('\n');
+
+  // Vérifie si c'est une trame GPGGA (coordonnées)
+  if (!gpsData.startsWith("$GPGGA")) return "";
+
+  // Convertit en tableau de caractères pour le découpage
+  char gpsBuffer[128];
+  gpsData.toCharArray(gpsBuffer, sizeof(gpsBuffer));
+
+  char* token = strtok(gpsBuffer, ",");
+  int fieldIndex = 0;
+  String latitude = "";
+  String longitude = "";
+  char latDir = ' ';
+  char lonDir = ' ';
+
+  while (token != NULL) {
+    fieldIndex++;
+
+    switch (fieldIndex) {
+      case 3: latitude = token; break;       // latitude
+      case 4: latDir = token[0]; break;      // N/S
+      case 5: longitude = token; break;      // longitude
+      case 6: lonDir = token[0]; break;      // E/W
+    }
+
+    token = strtok(NULL, ",");
+  }
+
+  // Vérifie que les coordonnées sont valides
+  if (latitude.length() > 0 && longitude.length() > 0) {
+    return latitude + latDir + "," + longitude + lonDir;
+  }
+
+  return "";
 }
 
 void processConfigurationCommand(String input) {
