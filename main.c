@@ -7,7 +7,7 @@
 // Initialisation des composants
 BME280I2C bme;
 RTC_DS3231 rtc;
-ChainableLED leds(4, 5, 1);
+ChainableLED leds(5, 6, 1);
 SoftwareSerial SoftSerial(4, 3);
 #define SERIAL_BAUD 9600
 #define light_sensor A0
@@ -52,25 +52,36 @@ void setup() {
   pinMode(green_button, INPUT);
   leds.setColorRGB(0, 0, 255, 0);
 
-  attachInterrupt(digitalPinToInterrupt(bouton_bleu), interruption_bleu, FALLING);
-  attachInterrupt(digitalPinToInterrupt(bouton_blanc), interruption_blanc, FALLING);
+  attachInterrupt(digitalPinToInterrupt(red_button), interruption_bleu, FALLING);
+  attachInterrupt(digitalPinToInterrupt(green_button), interruption_blanc, FALLING);
 }
 
 void loop() {
-  int etatBoutonBleu = digitalRead(bouton_bleu);
-  int etatBoutonBlanc = digitalRead(bouton_blanc);
+  String modeActuel;
+  check_buttons_press(&modeActuel);
+
+  switch (modeActuel) {
+  case STANDARD: modeStandard(); break;
+  case CONFIGURATION: modeConfiguration(); break;
+  case MAINTENANCE: modeMaintenance(); break;
+  case ECONOMIQUE: modeEconomique(); break;
+  }
+}
+void check_buttons_press(String *modeActuel) {
+int red_button_state = digitalRead(red_button);
+int green_button_state = digitalRead(green_button);
 
   // Bouton Blanc (retour direct au mode Standard depuis Maintenance ou Économique)
-  if (etatBoutonBleu == LOW && (millis() - dernierAppui >= 5000)) {
-    if (modeActuel == MAINTENANCE || modeActuel == ECONOMIQUE) {
+  if (red_button_state == LOW && (millis() - dernierAppui >= 5000)) {
+    if (*modeActuel == MAINTENANCE || *modeActuel == ECONOMIQUE) {
       // Retour direct au mode Standard depuis le mode Maintenance ou Économique
-      modeActuel = STANDARD;
+      *modeActuel = STANDARD;
       leds.setColorRGB(0, 0, 255, 0);  // LED verte continue pour le mode Standard
       Serial.println("Retour direct au mode Standard depuis Maintenance ou Économique");
-    } else if (modeActuel == STANDARD) {
+    } else if (*modeActuel == STANDARD) {
       // Passer du mode Standard au mode Économique
-      modePrecedent = modeActuel;
-      modeActuel = ECONOMIQUE;
+      modePrecedent = *modeActuel;
+      *modeActuel = ECONOMIQUE;
       leds.setColorRGB(0, 0, 0, 255);  // LED bleue continue pour le mode Économique
       Serial.println("Passage au mode Économique");
     }
@@ -78,16 +89,16 @@ void loop() {
   }
 
   // Bouton Bleu (Mode Maintenance <-> Retour au mode précédent ou mode Standard)
-  if (etatBoutonBlanc == LOW && (millis() - dernierAppui >= 5000)) {
-    if (modeActuel == STANDARD || modeActuel == ECONOMIQUE) {
+  if (green_button_state == LOW && (millis() - dernierAppui >= 5000)) {
+    if (*modeActuel == STANDARD || *modeActuel == ECONOMIQUE) {
       // Passer en mode Maintenance depuis le mode Standard ou Économique
-      modePrecedent = modeActuel;
-      modeActuel = MAINTENANCE;
+      modePrecedent = *modeActuel;
+      *modeActuel = MAINTENANCE;
       leds.setColorRGB(255, 165, 0, 0);  // LED orange continue pour le mode Maintenance
       Serial.println("Passage au mode Maintenance");
-    } else if (modeActuel == MAINTENANCE) {
+    } else if (*modeActuel == MAINTENANCE) {
       // Retourner au mode précédent (Standard ou Économique) depuis le mode Maintenance
-      modeActuel = modePrecedent;
+      *modeActuel = modePrecedent;
       if (modePrecedent == STANDARD) {
         leds.setColorRGB(0, 0, 255, 0);  // LED verte continue pour le mode Standard
         Serial.println("Retour au mode Standard depuis Maintenance");
@@ -100,23 +111,16 @@ void loop() {
   }
 
   // Vérification d'inactivité en mode Configuration
-  if (etatBoutonBleu == HIGH && etatBoutonBlanc == HIGH && (millis() - dernierAppui >= 1800000)) {
-    if (modeActuel == CONFIGURATION) {
+  if (red_button_state == HIGH && green_button_state == HIGH && (millis() - dernierAppui >= 1800000)) {
+    if (*modeActuel == CONFIGURATION) {
       // Retour automatique au mode Standard après inactivité
-      modeActuel = STANDARD;
+      *modeActuel = STANDARD;
       leds.setColorRGB(0, 0, 255, 0);  // LED verte continue pour le mode standard
       Serial.println("Retour au mode Standard après inactivité en mode Configuration");
     }
   }
-    switch (modeActuel) {
-    case STANDARD: modeStandard(); break;
-    case CONFIGURATION: modeConfiguration(); break;
-    case MAINTENANCE: modeMaintenance(); break;
-    case ECONOMIQUE: modeEconomique(); break;
-  }
+
 }
-
-
 void modeConfiguration() {
   leds.setColorRGB(0, 255, 60, 0);
   if (Serial.available() > 0) {
