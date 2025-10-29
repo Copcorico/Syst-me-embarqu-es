@@ -6,7 +6,9 @@
 #include <EEPROM.h>
 #include <SPI.h>
 #include <SD.h>
+#include <RTClib.h>
 
+  
 // Initialisation des composants
 BME280I2C bme;
 RTC_DS3231 rtc;
@@ -65,6 +67,7 @@ void setup() {
   pinMode(red_button, INPUT);
   pinMode(green_button, INPUT);
   leds.setColorRGB(0, 0, 255, 0);
+  rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   //Initialisation de la carte SD
   if (!SD.begin(4)) {  // 4 = broche CS (selon le module)
     Serial.println("Échec de l'initialisation de la carte SD !");
@@ -312,6 +315,18 @@ void save_data() {
   }
 }
 
+String get_time() {
+  DateTime now = rtc.now();
+  char Date [80];
+  snprintf(Date, sizeof(Date), "%02d/%02d/%04d ; Heure: %02d:%02d",
+         now.day(), now.month(), now.year(), now.hour(), now.minute());
+  return Date;
+}
+
+// Mode maintenance
+void enter_maintenance(){
+  Serial.println(Mesure);
+}
 
 void processConfigurationCommand(String input) {
   int separatorIndex = input.indexOf('=');
