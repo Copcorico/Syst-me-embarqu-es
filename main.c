@@ -4,6 +4,9 @@
 #include <SoftwareSerial.h>
 #include <RTClib.h>
 #include <EEPROM.h>
+#include <SPI.h>
+#include <SD.h>
+
 // Initialisation des composants
 BME280I2C bme;
 RTC_DS3231 rtc;
@@ -11,6 +14,12 @@ ChainableLED leds(5, 6, 1);
 SoftwareSerial SoftSerial(8, 9);
 #define SERIAL_BAUD 9600
 #define light_sensor A0
+// Carte SD et sauvegarde
+File fichier;
+const int Nbr_MAX_MESURE = 8;
+char *Mesure[500];
+int lignes = 0;
+int compt = 1;
 
 // Adresses EEPROM
 // Adresses EEPROM réorganisées
@@ -56,6 +65,12 @@ void setup() {
   pinMode(red_button, INPUT);
   pinMode(green_button, INPUT);
   leds.setColorRGB(0, 0, 255, 0);
+  //Initialisation de la carte SD
+  if (!SD.begin(4)) {  // 4 = broche CS (selon le module)
+    Serial.println("Échec de l'initialisation de la carte SD !");
+    exit(1);
+    return;
+  } else Serial.println("Carte SD prête.");
 
   attachInterrupt(digitalPinToInterrupt(red_button), red_interruption, FALLING);
   attachInterrupt(digitalPinToInterrupt(green_button), green_interruption, FALLING);
@@ -75,9 +90,15 @@ void loop() {
 void check_buttons_press(int *modeActuel, int *modePrecedent) {
 int red_button_state = digitalRead(red_button);
 int green_button_state = digitalRead(green_button);
-
-  // Bouton Blanc (retour direct au mode Standard depuis Maintenance ou Économique)
-  if (red_button_state == LOW && (millis() - dernierAppui >= 5000)) {
+long debutAppui = millis();
+long dernierAppui ;
+  
+  //Bouton rouge cliqué, mode configuration
+  if (red_button_state == LOW) {
+    if (millis() - debutAppui <=2000 && red_button_state == HIGH) *modeActuel = 2 ;
+  }
+  // Bouton Rouge (retour direct au mode Standard depuis Maintenance ou Économique)
+  if (red_button_state == LOW && (millis() - debutAppui >= 5000)) {
     if (*modeActuel == 3 || *modeActuel == 4) {
       // Retour direct au mode Standard depuis le mode Maintenance ou Économique
       *modeActuel = 1;
@@ -93,13 +114,13 @@ int green_button_state = digitalRead(green_button);
     dernierAppui = millis();  // Mettre à jour le dernier appui
   }
 
-  // Bouton Bleu (Mode Maintenance <-> Retour au mode précédent ou mode Standard)
-  if (green_button_state == LOW && (millis() - dernierAppui >= 5000)) {
+  // Bouton Vert (Mode Maintenance <-> Retour au mode précédent ou mode Standard)
+  if (green_button_state == LOW && (millis() - debutAppui >= 5000)) {
     if (*modeActuel == 1 || *modeActuel == 4) {
       // Passer en mode Maintenance depuis le mode Standard ou Économique
       *modePrecedent = *modeActuel;
       *modeActuel = 3;
-      leds.setColorRGB(255, 165, 0, 0);  // LED orange continue pour le mode Maintenance
+      leds.setColorRGB(0, 255, 165, 0);  // LED orange continue pour le mode Maintenance
       Serial.println("Passage au mode Maintenance");
     } else if (*modeActuel == 3) {
       // Retourner au mode précédent (Standard ou Économique) depuis le mode Maintenance
@@ -221,6 +242,76 @@ String get_localisation() {
   }
   return "";
 }
+
+
+// Fonction de sauvegarde des données
+void save_data() {
+  char nom_f[20];
+  const char *base = "Fich_";
+  snprintf(nom_f, sizeof(nom_f),"%s%d.txt",base, compt);
+
+  // Comptons le nombre de ligne de mesure presente
+  File f = SD.open(nom_f, FILE_READ);
+  if (f) {
+    lignes = 0;
+    bool prevCR = false;
+    while (f.available()) {
+      char c = f.read();
+      if (c == '\n') {
+        // Si on est en CRLF, on compte quand même une seule ligne
+        if (!prevCR) lignes++;
+        // reset
+        prevCR = false;
+      } else if (c == '\r') {
+        // CR rencontré, on peut compter une ligne et attendre LF
+        lignes++;
+        prevCR = true;
+      } else {
+       prevCR = false;
+      }
+    }
+  }
+  f.close();
+  Serial.println(lignes);
+  if (lignes >= Nbr_MAX_MESURE){
+    compt ++;
+    snprintf(nom_f, sizeof(nom_f),"%s%d.txt",base, compt);
+    lignes = 0;
+  }
+  // Création / ouverture d’un fichier
+  fichier = SD.open(nom_f, FILE_WRITE);
+
+  if (!fichier) {
+    Serial.println("Impossible d'ouvrir le fichier en écriture");
+    //LED intermittente rouge et blanche (fréquence 1Hz, durée 2 fois plus longue pourle blanc)
+    while (!fichier) {
+      leds.setColorRGB(0, 255, 0, 0); 
+      delay(500);
+      leds.setColorRGB(0, 255, 255, 255);
+      delay(1000);
+    }
+    return ;
+  } else {
+  // ecriture dans le fichier
+  snprintf(*Mesure, sizeof(Mesure), "Localisation : %s ; Température : %f ; Humidité : %f ; Pression : %f ; Luminosité : %f ; %s",get_localisation(), get_temp(&Serial), get_humidity(&Serial), get_pressure(&Serial), get_luminosity(), get_time());
+  size_t written = fichier.println("%s",Mesure);
+  fichier.flush(); // force l’écriture
+  if (written == 0) {
+    Serial.println("Erreur : carte SD probablement pleine !");
+    
+    //LED intermittente rouge et blanche (fréquence 1Hz, durée identique pour les 2 couleurs)
+    while (written == 0){
+      leds.setColorRGB(0, 255, 0, 0); 
+      delay(500);
+      leds.setColorRGB(0, 255, 255, 255);
+      delay(500);
+    }
+  }
+    
+  fichier.close(); // Fermer le fihier
+  }
+}
+
 
 void processConfigurationCommand(String input) {
   int separatorIndex = input.indexOf('=');
