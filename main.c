@@ -8,7 +8,7 @@
 BME280I2C bme;
 RTC_DS3231 rtc;
 ChainableLED leds(5, 6, 1);
-SoftwareSerial SoftSerial(4, 3);
+SoftwareSerial SoftSerial(8, 9);
 #define SERIAL_BAUD 9600
 #define light_sensor A0
 
@@ -37,7 +37,11 @@ SoftwareSerial SoftSerial(4, 3);
 #define EEPROM_CLOCK_ADDR 24                // 8 octets pour l'heure (format "HH:MM:SS")
 #define EEPROM_DATE_ADDR 32                 // 10 octets pour la date (format "DD-MM-YYYY")
 #define EEPROM_DAY_ADDR 42                  // 3 octets pour le jour de la semaine (format "MON")
-
+//variables globales de configuration
+int LUMIN, LUMIN_LOW, LUMIN_HIGH, TEMP_AIR, MIN_TEMP_AIR, MAX_TEMP_AIR;
+int HYGR, HYGR_MINT, HYGR_MAXT, PRESSURE, PRESSURE_MIN, PRESSURE_MAX;
+int LOG_INTERVALL = 10, FILE_MAX_SIZE = 4096, TIMEOUT = 30;
+//Constantes bouttons
 const int red_button = 3;
 const int green_button = 2;
 
@@ -47,41 +51,42 @@ void setup() {
   Wire.begin();
   rtc.begin();
   SoftSerial.begin(9600);
-
+  int modeActuel=1;
+  int modePrecedent=1; // Variable pour stocker le mode précédent
   pinMode(red_button, INPUT);
   pinMode(green_button, INPUT);
   leds.setColorRGB(0, 0, 255, 0);
 
-  attachInterrupt(digitalPinToInterrupt(red_button), interruption_bleu, FALLING);
-  attachInterrupt(digitalPinToInterrupt(green_button), interruption_blanc, FALLING);
+  attachInterrupt(digitalPinToInterrupt(red_button), red_interruption, FALLING);
+  attachInterrupt(digitalPinToInterrupt(green_button), green_interruption, FALLING);
 }
 
 void loop() {
-  String modeActuel;
-  check_buttons_press(&modeActuel);
+  check_buttons_press(&modeActuel,&modePrecedent);
+
 
   switch (modeActuel) {
-  case STANDARD: modeStandard(); break;
-  case CONFIGURATION: modeConfiguration(); break;
-  case MAINTENANCE: modeMaintenance(); break;
-  case ECONOMIQUE: modeEconomique(); break;
+  case 1: modeStandard(); break;
+  case 2: modeConfiguration(); break;
+  case 3: modeMaintenance(); break;
+  case 4: modeEconomique(); break;
   }
 }
-void check_buttons_press(String *modeActuel) {
+void check_buttons_press(int *modeActuel, int *modePrecedent) {
 int red_button_state = digitalRead(red_button);
 int green_button_state = digitalRead(green_button);
 
   // Bouton Blanc (retour direct au mode Standard depuis Maintenance ou Économique)
   if (red_button_state == LOW && (millis() - dernierAppui >= 5000)) {
-    if (*modeActuel == MAINTENANCE || *modeActuel == ECONOMIQUE) {
+    if (*modeActuel == 3 || *modeActuel == 4) {
       // Retour direct au mode Standard depuis le mode Maintenance ou Économique
-      *modeActuel = STANDARD;
+      *modeActuel = 1;
       leds.setColorRGB(0, 0, 255, 0);  // LED verte continue pour le mode Standard
       Serial.println("Retour direct au mode Standard depuis Maintenance ou Économique");
-    } else if (*modeActuel == STANDARD) {
+    } else if (*modeActuel == 1) {
       // Passer du mode Standard au mode Économique
-      modePrecedent = *modeActuel;
-      *modeActuel = ECONOMIQUE;
+      *modePrecedent = *modeActuel;
+      *modeActuel = 4;
       leds.setColorRGB(0, 0, 0, 255);  // LED bleue continue pour le mode Économique
       Serial.println("Passage au mode Économique");
     }
@@ -90,19 +95,19 @@ int green_button_state = digitalRead(green_button);
 
   // Bouton Bleu (Mode Maintenance <-> Retour au mode précédent ou mode Standard)
   if (green_button_state == LOW && (millis() - dernierAppui >= 5000)) {
-    if (*modeActuel == STANDARD || *modeActuel == ECONOMIQUE) {
+    if (*modeActuel == 1 || *modeActuel == 4) {
       // Passer en mode Maintenance depuis le mode Standard ou Économique
-      modePrecedent = *modeActuel;
-      *modeActuel = MAINTENANCE;
+      *modePrecedent = *modeActuel;
+      *modeActuel = 3;
       leds.setColorRGB(255, 165, 0, 0);  // LED orange continue pour le mode Maintenance
       Serial.println("Passage au mode Maintenance");
-    } else if (*modeActuel == MAINTENANCE) {
+    } else if (*modeActuel == 3) {
       // Retourner au mode précédent (Standard ou Économique) depuis le mode Maintenance
-      *modeActuel = modePrecedent;
-      if (modePrecedent == STANDARD) {
+      *modeActuel = *modePrecedent;
+      if (*modePrecedent == 1) {
         leds.setColorRGB(0, 0, 255, 0);  // LED verte continue pour le mode Standard
         Serial.println("Retour au mode Standard depuis Maintenance");
-      } else if (modePrecedent == ECONOMIQUE) {
+      } else if (*modePrecedent == 4) {
         leds.setColorRGB(0, 0, 0, 255);  // LED bleue continue pour le mode Économique
         Serial.println("Retour au mode Économique depuis Maintenance");
       }
@@ -112,9 +117,9 @@ int green_button_state = digitalRead(green_button);
 
   // Vérification d'inactivité en mode Configuration
   if (red_button_state == HIGH && green_button_state == HIGH && (millis() - dernierAppui >= 1800000)) {
-    if (*modeActuel == CONFIGURATION) {
+    if (*modeActuel == 2) {
       // Retour automatique au mode Standard après inactivité
-      *modeActuel = STANDARD;
+      *modeActuel = 1;
       leds.setColorRGB(0, 0, 255, 0);  // LED verte continue pour le mode standard
       Serial.println("Retour au mode Standard après inactivité en mode Configuration");
     }
@@ -131,9 +136,10 @@ void modeConfiguration() {
 
 
 float get_luminosity() {
-  float sensorValue = analogRead(light_sensor); // Lire la valeur brute du capteur
-  Rsensor=(float)(1023-sensorValue)*10/sensorValue;
-  return sensorValue; // Retourner la valeur brute pour un traitement ultérieur
+  int sensorValue = analogRead(light_sensor); // Lire la valeur brute du capteur
+  if (sensorValue <= 0) return 1023.0; // Éviter la division par zéro
+  float Rsensor=(float)(1023-sensorValue)*10/sensorValue;
+  return Rsensor; // Retourner la valeur brute pour un traitement ultérieur
 
 }
 
@@ -149,7 +155,6 @@ float get_pressure(Stream* client){
    //client->print(pres);
    //client->println(" Pa");
   return(pres);
-   delay(1000);
 }
 
 float get_humidity
@@ -169,7 +174,7 @@ float get_humidity
   //client->print("% RH");
   //client->print("\n");
   return(hum);
-delay(1000);
+  }
 
 float get_temp(Stream* client){
    float temp(NAN), hum(NAN), pres(NAN);
@@ -183,49 +188,37 @@ float get_temp(Stream* client){
    //client->print(pres);
    //client->println(" Pa");
   return(temp);
-   delay(1000);
 }
 
 
 String get_localisation() {
-  // Vérifie si des données GPS sont disponibles
   if (!SoftSerial.available()) return "";
-
-  // Lecture d'une ligne NMEA complète
   String gpsData = SoftSerial.readStringUntil('\n');
-
-  // Vérifie si c'est une trame GPGGA (coordonnées)
+  gpsData.trim();
   if (!gpsData.startsWith("$GPGGA")) return "";
-
-  // Convertit en tableau de caractères pour le découpage
-  char gpsBuffer[128];
-  gpsData.toCharArray(gpsBuffer, sizeof(gpsBuffer));
-
-  char* token = strtok(gpsBuffer, ",");
+  // découpage basique
   int fieldIndex = 0;
   String latitude = "";
   String longitude = "";
   char latDir = ' ';
   char lonDir = ' ';
-
-  while (token != NULL) {
-    fieldIndex++;
-
-    switch (fieldIndex) {
-      case 3: latitude = token; break;       // latitude
-      case 4: latDir = token[0]; break;      // N/S
-      case 5: longitude = token; break;      // longitude
-      case 6: lonDir = token[0]; break;      // E/W
+  int start = 0;
+  for (int i = 0; i < (int)gpsData.length(); i++) {
+    if (gpsData[i] == ',' || i == (int)gpsData.length() - 1) {
+      String token = gpsData.substring(start, i == (int)gpsData.length() - 1 ? i + 1 : i);
+      start = i + 1;
+      fieldIndex++;
+      if (fieldIndex == 2) { /* UTC time, ignore */ }
+      else if (fieldIndex == 3) latitude = token;
+      else if (fieldIndex == 4 && token.length() > 0) latDir = token[0];
+      else if (fieldIndex == 5) longitude = token;
+      else if (fieldIndex == 6 && token.length() > 0) lonDir = token[0];
     }
-
-    token = strtok(NULL, ",");
   }
-
-  // Vérifie que les coordonnées sont valides
-  if (latitude.length() > 0 && longitude.length() > 0) {
+  
+  if (latitude.length() && longitude.length()) {
     return latitude + latDir + "," + longitude + lonDir;
   }
-
   return "";
 }
 
